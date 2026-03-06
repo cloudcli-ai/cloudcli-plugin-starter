@@ -1,8 +1,22 @@
-# CloudCLI Plugin Starter - Project Stats
-This plugin csans the currently selected project and shows file counts, lines of code, a file-type breakdown chart, largest files, and recently modified files.
+<div align="center">
+  <img src="https://raw.githubusercontent.com/siteboon/claudecodeui/main/public/logo.svg" alt="CloudCLI" width="64" height="64">
+  <h1>CloudCLI Plugin Starter — Project Stats</h1>
+  <p>A starter plugin for <a href="https://cloudcli.ai">CloudCLI Cloud</a> and <a href="https://github.com/siteboon/claudecodeui">CloudCLI UI</a></p>
+</div>
 
-This is a starter plugin for [CloudCLI Cloud](https://cloudcli.ai) and [CloudCLI UI](https://github.com/siteboon/claudecodeui) that shows project stats and demonstrates the full plugin API — frontend rendering with live context updates and a Node.js backend server with RPC communication.
+<p align="center">
+  <a href="https://cloudcli.ai">CloudCLI Cloud</a> · <a href="https://discord.gg/buxwujPNRE">Discord</a> · <a href="https://github.com/siteboon/claudecodeui/issues">Bug Reports</a> · <a href="https://cloudcli.ai/docs/plugin-overview">Plugin Docs</a>
+</p>
 
+<p align="center">
+  <a href="https://discord.gg/buxwujPNRE"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white" alt="Join our Discord"></a>
+</p>
+
+---
+
+This plugin scans the currently selected project and shows file counts, lines of code, a file-type breakdown chart, largest files, and recently modified files.
+
+It demonstrates the full plugin API — frontend rendering with live context updates and a Node.js backend server with RPC communication. Fork this repo to build your own plugin.
 
 For a complete guide to the plugin system, see the [Plugin Overview](https://cloudcli.ai/docs/plugin-overview).
 
@@ -13,7 +27,7 @@ For a complete guide to the plugin system, see the [Plugin Overview](https://clo
 **Manual:** Clone or copy this repository into your plugins directory:
 
 ```bash
-git clone <repo-url> ~/.claude-code-ui/plugins/project-stats
+git clone https://github.com/cloudcli-ai/cloudcli-plugin-starter.git ~/.claude-code-ui/plugins/project-stats
 ```
 
 Then open **Settings > Plugins** — "Project Stats" should appear. Enable it to add the tab.
@@ -93,7 +107,7 @@ api.context
 ### RPC helper
 
 ```js
-const data = await api.rpc('GET', '/hello');
+const data = await api.rpc('GET', '/stats?path=/my/project');
 const result = await api.rpc('POST', '/echo', { greeting: 'hi' });
 ```
 
@@ -123,7 +137,7 @@ The subprocess runs with a minimal env — only `PATH`, `HOME`, `NODE_ENV`, and 
   "version": "1.0.0",
   "description": "Short description shown in settings.",
   "author": "Your Name",
-  "icon": "icon.svg",             // your icon name
+  "icon": "icon.svg",           // Custom SVG icon
   "type": "module",             // Must be "module"
   "slot": "tab",                // Where the plugin appears — only "tab" today
   "entry": "index.js",          // Frontend entry file
@@ -158,9 +172,10 @@ You are responsible for reviewing plugin code before installing.
 
 **Install-time** — npm `postinstall` scripts are blocked (`--ignore-scripts`). Ship pre-built or use packages that work without postinstall hooks.
 
-## Contributing to the official plugin repository
+## Contributing
 
 If you've built a plugin and would like it added to the official CloudCLI UI plugin repository, [open an issue](https://github.com/siteboon/claudecodeui/issues) with a link to your plugin's repository. The team will review it for inclusion.
 
 ## License
+
 MIT
