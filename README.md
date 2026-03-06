@@ -123,7 +123,7 @@ The subprocess runs with a minimal env — only `PATH`, `HOME`, `NODE_ENV`, and 
   "version": "1.0.0",
   "description": "Short description shown in settings.",
   "author": "Your Name",
-  "icon": "Puzzle",             // Lucide icon name
+  "icon": "icon.svg",             // your icon name
   "type": "module",             // Must be "module"
   "slot": "tab",                // Where the plugin appears — only "tab" today
   "entry": "index.js",          // Frontend entry file
@@ -131,10 +131,6 @@ The subprocess runs with a minimal env — only `PATH`, `HOME`, `NODE_ENV`, and 
   "permissions": []              // Reserved for future use
 }
 ```
-
-### Available icons
-
-`Puzzle` (default), `Box`, `Database`, `Globe`, `Terminal`, `Wrench`, `Zap`, `BarChart3`, `Folder`, `MessageSquare`, `GitBranch`
 
 ## Constraints
 
