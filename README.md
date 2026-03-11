@@ -14,6 +14,9 @@
 </p>
 
 ---
+<p align="center">
+  <img src="project-stats.png" alt="Project Stats Screenshot" width="700">
+</p>
 
 This plugin scans the currently selected project and shows file counts, lines of code, a file-type breakdown chart, largest files, and recently modified files.
 
@@ -26,6 +29,7 @@ For a complete guide to the plugin system, see the [Plugin Overview](https://clo
 **From git** (recommended): Open **Settings > Plugins** in CloudCLI UI, paste this repository's URL, and click **Install**. The repo is cloned, dependencies are installed, and the plugin is ready to enable.
 
 **Manual:** Clone or copy this repository into your plugins directory:
+
 
 ```bash
 git clone https://github.com/cloudcli-ai/cloudcli-plugin-starter.git ~/.claude-code-ui/plugins/project-stats
