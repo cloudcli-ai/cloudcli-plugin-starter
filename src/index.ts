@@ -3,21 +3,81 @@
  *
  * The host calls mount(container, api) when the plugin tab is activated and
  * unmount(container) when it is torn down.
- *
- * api shape:
- *   api.context                          — current PluginContext snapshot
- *   api.onContextChange(cb) → unsubscribe — called on theme/project/session changes
- *   api.rpc(method, path, body?) → Promise — proxied to this plugin's server subprocess
  */
 
+import type { PluginAPI, PluginContext } from './types.js';
+
+// ── Types ──────────────────────────────────────────────────────────────
+
+interface FileEntry {
+  name: string;
+  size: number;
+  mtime: number;
+}
+
+interface ProjectStats {
+  totalFiles: number;
+  totalLines: number;
+  totalSize: number;
+  byExtension: [string, number][];
+  largest: FileEntry[];
+  recent: FileEntry[];
+}
+
+interface StatsCache {
+  projectPath: string;
+  stats: ProjectStats;
+}
+
+// ── Constants ──────────────────────────────────────────────────────────
+
 const PALETTE = [
-  '#6366f1','#22d3ee','#f59e0b','#10b981',
-  '#f43f5e','#a78bfa','#fb923c','#34d399',
-  '#60a5fa','#e879f9','#facc15','#4ade80',
+  '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
+  '#f43f5e', '#a78bfa', '#fb923c', '#34d399',
+  '#60a5fa', '#e879f9', '#facc15', '#4ade80',
 ];
 
-function ensureAssets() {
+const MONO = "'JetBrains Mono', 'Fira Code', ui-monospace, monospace";
+
+// ── Theme helpers ──────────────────────────────────────────────────────
+
+interface ThemeColors {
+  bg: string;
+  surface: string;
+  border: string;
+  text: string;
+  muted: string;
+  accent: string;
+  dim: string;
+}
+
+function themeColors(dark: boolean): ThemeColors {
+  return dark
+    ? {
+        bg: '#08080f',
+        surface: '#0e0e1a',
+        border: '#1a1a2c',
+        text: '#e2e0f0',
+        muted: '#52507a',
+        accent: '#fbbf24',
+        dim: 'rgba(251,191,36,0.1)',
+      }
+    : {
+        bg: '#fafaf9',
+        surface: '#ffffff',
+        border: '#e8e6f0',
+        text: '#0f0e1a',
+        muted: '#9490b0',
+        accent: '#d97706',
+        dim: 'rgba(217,119,6,0.08)',
+      };
+}
+
+// ── Utility helpers ────────────────────────────────────────────────────
+
+function ensureAssets(): void {
   if (document.getElementById('ps-font')) return;
+
   const link = document.createElement('link');
   link.id = 'ps-font';
   link.rel = 'stylesheet';
@@ -37,15 +97,13 @@ function ensureAssets() {
   document.head.appendChild(s);
 }
 
-const MONO = "'JetBrains Mono', 'Fira Code', ui-monospace, monospace";
-
-function fmt(b) {
+function fmt(b: number): string {
   if (b < 1024) return `${b}B`;
   if (b < 1048576) return `${(b / 1024).toFixed(1)}KB`;
   return `${(b / 1048576).toFixed(1)}MB`;
 }
 
-function ago(ms) {
+function ago(ms: number): string {
   const s = Math.floor((Date.now() - ms) / 1000);
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
@@ -53,9 +111,9 @@ function ago(ms) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function countUp(el, target, formatFn, duration = 900) {
+function countUp(el: HTMLElement, target: number, formatFn: (n: number) => string, duration = 900): void {
   const start = performance.now();
-  function tick(now) {
+  function tick(now: number): void {
     const p = Math.min((now - start) / duration, 1);
     const ease = 1 - (1 - p) ** 3;
     el.textContent = formatFn(Math.round(target * ease));
@@ -64,47 +122,36 @@ function countUp(el, target, formatFn, duration = 900) {
   requestAnimationFrame(tick);
 }
 
-function v(dark) {
-  return dark ? {
-    bg:      '#08080f',
-    surface: '#0e0e1a',
-    border:  '#1a1a2c',
-    text:    '#e2e0f0',
-    muted:   '#52507a',
-    accent:  '#fbbf24',
-    dim:     'rgba(251,191,36,0.1)',
-  } : {
-    bg:      '#fafaf9',
-    surface: '#ffffff',
-    border:  '#e8e6f0',
-    text:    '#0f0e1a',
-    muted:   '#9490b0',
-    accent:  '#d97706',
-    dim:     'rgba(217,119,6,0.08)',
-  };
-}
-
-function skeletonRows(c, widths) {
-  return widths.map((w, i) => `
+function skeletonRows(c: ThemeColors, widths: number[]): string {
+  return widths
+    .map(
+      (w, i) => `
     <div class="ps-skel" style="
       height:10px;width:${w}%;background:${c.muted};border-radius:2px;
       margin-bottom:8px;animation-delay:${i * 0.1}s
-    "></div>`).join('');
+    "></div>`,
+    )
+    .join('');
 }
 
-export function mount(container, api) {
+// ── Mount / Unmount ────────────────────────────────────────────────────
+
+export function mount(container: HTMLElement, api: PluginAPI): void {
   ensureAssets();
-  let cache = null;
+  let cache: StatsCache | null = null;
 
   const root = document.createElement('div');
   Object.assign(root.style, {
-    height: '100%', overflowY: 'auto', boxSizing: 'border-box',
-    padding: '24px', fontFamily: MONO,
+    height: '100%',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
+    padding: '24px',
+    fontFamily: MONO,
   });
   container.appendChild(root);
 
-  function render(ctx, stats) {
-    const c = v(ctx.theme === 'dark');
+  function render(ctx: PluginContext, stats: ProjectStats | null): void {
+    const c = themeColors(ctx.theme === 'dark');
     root.style.background = c.bg;
     root.style.color = c.text;
 
@@ -125,18 +172,26 @@ export function mount(container, api) {
           <div style="font-size:0.7rem;color:${c.muted};margin-top:4px">${ctx.project.path}</div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
-          ${[0, 1, 2].map(i => `
+          ${[0, 1, 2]
+            .map(
+              () => `
             <div style="background:${c.surface};border:1px solid ${c.border};border-radius:3px;padding:18px">
               ${skeletonRows(c, [65])}
               ${skeletonRows(c, [40])}
-            </div>`).join('')}
+            </div>`,
+            )
+            .join('')}
         </div>
         <div style="background:${c.surface};border:1px solid ${c.border};border-radius:3px;padding:18px;margin-bottom:12px">
-          ${[75, 55, 38, 22, 14].map((w, i) => `
+          ${[75, 55, 38, 22, 14]
+            .map(
+              (w, i) => `
             <div style="display:flex;gap:10px;align-items:center;margin-bottom:7px">
-              <div class="ps-skel" style="width:44px;height:8px;background:${c.muted};border-radius:2px;animation-delay:${i*0.08}s"></div>
-              <div class="ps-skel" style="width:${w}%;height:4px;background:${c.muted};border-radius:1px;animation-delay:${i*0.08}s"></div>
-            </div>`).join('')}
+              <div class="ps-skel" style="width:44px;height:8px;background:${c.muted};border-radius:2px;animation-delay:${i * 0.08}s"></div>
+              <div class="ps-skel" style="width:${w}%;height:4px;background:${c.muted};border-radius:1px;animation-delay:${i * 0.08}s"></div>
+            </div>`,
+            )
+            .join('')}
         </div>`;
       return;
     }
@@ -164,21 +219,27 @@ export function mount(container, api) {
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
-        ${[
-          ['files',      stats.totalFiles, n => n.toLocaleString()],
-          ['lines',      stats.totalLines, n => n.toLocaleString()],
-          ['total size', stats.totalSize,  fmt],
-        ].map(([label, val, fmt], i) => `
+        ${(
+          [
+            ['files', stats.totalFiles, (n: number) => n.toLocaleString()],
+            ['lines', stats.totalLines, (n: number) => n.toLocaleString()],
+            ['total size', stats.totalSize, fmt],
+          ] as [string, number, (n: number) => string][]
+        )
+          .map(
+            ([label, , ], i) => `
           <div class="ps-up" style="
             background:${c.surface};border:1px solid ${c.border};
-            border-radius:3px;padding:18px;animation-delay:${i*0.06}s
+            border-radius:3px;padding:18px;animation-delay:${i * 0.06}s
           ">
             <div id="ps-m-${i}" style="
               font-size:1.9rem;font-weight:700;letter-spacing:-0.04em;
               line-height:1;color:${c.text};
             ">0</div>
             <div style="font-size:0.65rem;color:${c.muted};margin-top:6px;letter-spacing:0.1em;text-transform:uppercase">${label}</div>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join('')}
       </div>
 
       <div class="ps-up" style="
@@ -186,52 +247,67 @@ export function mount(container, api) {
         border-radius:3px;padding:18px;margin-bottom:12px;animation-delay:0.12s
       ">
         <div style="font-size:0.62rem;color:${c.muted};letter-spacing:0.12em;text-transform:uppercase;margin-bottom:14px">file types</div>
-        ${stats.byExtension.map(([ext, count], i) => `
-          <div class="ps-up" style="display:flex;align-items:center;gap:10px;margin-bottom:7px;animation-delay:${0.15+i*0.035}s">
+        ${stats.byExtension
+          .map(
+            ([ext, count], i) => `
+          <div class="ps-up" style="display:flex;align-items:center;gap:10px;margin-bottom:7px;animation-delay:${0.15 + i * 0.035}s">
             <div style="width:50px;font-size:0.68rem;text-align:right;color:${c.muted};flex-shrink:0">${ext}</div>
             <div style="flex:1;height:4px;background:${c.border};border-radius:1px;overflow:hidden">
               <div class="ps-bar" style="
-                height:100%;width:${Math.round((count/maxCount)*100)}%;
+                height:100%;width:${Math.round((count / maxCount) * 100)}%;
                 background:${PALETTE[i % PALETTE.length]};
-                animation-delay:${0.18+i*0.035}s;border-radius:1px;
+                animation-delay:${0.18 + i * 0.035}s;border-radius:1px;
               "></div>
             </div>
             <div style="width:30px;font-size:0.68rem;color:${c.muted};text-align:right;flex-shrink:0">${count}</div>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join('')}
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        ${[
-          ['largest files',      stats.largest.map(f => [f.name, fmt(f.size)])],
-          ['recently modified',  stats.recent.map(f => [f.name, ago(f.mtime)])],
-        ].map(([title, rows], ci) => `
+        ${(
+          [
+            ['largest files', stats.largest.map((f) => [f.name, fmt(f.size)])],
+            ['recently modified', stats.recent.map((f) => [f.name, ago(f.mtime)])],
+          ] as [string, [string, string][]][]
+        )
+          .map(
+            ([title, rows], ci) => `
           <div class="ps-up" style="
             background:${c.surface};border:1px solid ${c.border};
-            border-radius:3px;padding:18px;animation-delay:${0.18+ci*0.05}s
+            border-radius:3px;padding:18px;animation-delay:${0.18 + ci * 0.05}s
           ">
             <div style="font-size:0.62rem;color:${c.muted};letter-spacing:0.12em;text-transform:uppercase;margin-bottom:12px">${title}</div>
-            ${rows.map(([name, val], ri) => `
+            ${rows
+              .map(
+                ([name, val], ri) => `
               <div class="ps-up" style="
                 display:flex;justify-content:space-between;align-items:baseline;
                 padding:4px 0;border-bottom:1px solid ${c.border};font-size:0.7rem;
-                animation-delay:${0.2+ci*0.05+ri*0.03}s;gap:8px;
+                animation-delay:${0.2 + ci * 0.05 + ri * 0.03}s;gap:8px;
               ">
                 <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;opacity:0.75" title="${name}">${name}</div>
                 <div style="color:${c.accent};flex-shrink:0;opacity:0.9">${val}</div>
-              </div>`).join('')}
-          </div>`).join('')}
+              </div>`,
+              )
+              .join('')}
+          </div>`,
+          )
+          .join('')}
       </div>
     `;
 
     // Count-up animations for metric cards
-    [
-      [0, stats.totalFiles, n => n.toLocaleString()],
-      [1, stats.totalLines, n => n.toLocaleString()],
-      [2, stats.totalSize,  fmt],
-    ].forEach(([i, val, formatFn]) => {
-      const el = root.querySelector(`#ps-m-${i}`);
+    const metrics: [number, number, (n: number) => string][] = [
+      [0, stats.totalFiles, (n: number) => n.toLocaleString()],
+      [1, stats.totalLines, (n: number) => n.toLocaleString()],
+      [2, stats.totalSize, fmt],
+    ];
+    for (const [i, val, formatFn] of metrics) {
+      const el = root.querySelector(`#ps-m-${i}`) as HTMLElement | null;
       if (el) countUp(el, val, formatFn);
-    });
+    }
 
     root.querySelector('#ps-refresh')?.addEventListener('click', () => {
       cache = null;
@@ -239,37 +315,41 @@ export function mount(container, api) {
     });
   }
 
-  async function load(ctx) {
-    if (!ctx.project) { cache = null; render(ctx, null); return; }
+  async function load(ctx: PluginContext): Promise<void> {
+    if (!ctx.project) {
+      cache = null;
+      render(ctx, null);
+      return;
+    }
     render(ctx, null);
     try {
-      const stats = await api.rpc('GET', `stats?path=${encodeURIComponent(ctx.project.path)}`);
+      const stats = (await api.rpc('GET', `stats?path=${encodeURIComponent(ctx.project.path)}`)) as ProjectStats;
       cache = { projectPath: ctx.project.path, stats };
       render(ctx, stats);
     } catch (err) {
-      const c = v(ctx.theme === 'dark');
+      const c = themeColors(ctx.theme === 'dark');
       root.style.background = c.bg;
       root.innerHTML = `
         <div style="padding:24px;font-size:0.78rem;color:${c.accent};opacity:0.8;font-family:${MONO}">
-          ✗ ${err.message}
+          ✗ ${(err as Error).message}
         </div>`;
     }
   }
 
   load(api.context);
 
-  const unsubscribe = api.onContextChange(ctx => {
+  const unsubscribe = api.onContextChange((ctx) => {
     if (ctx.project?.path === cache?.projectPath) render(ctx, cache?.stats ?? null);
     else load(ctx);
   });
 
-  container._psUnsubscribe = unsubscribe;
+  (container as any)._psUnsubscribe = unsubscribe;
 }
 
-export function unmount(container) {
-  if (typeof container._psUnsubscribe === 'function') {
-    container._psUnsubscribe();
-    delete container._psUnsubscribe;
+export function unmount(container: HTMLElement): void {
+  if (typeof (container as any)._psUnsubscribe === 'function') {
+    (container as any)._psUnsubscribe();
+    delete (container as any)._psUnsubscribe;
   }
   container.innerHTML = '';
 }

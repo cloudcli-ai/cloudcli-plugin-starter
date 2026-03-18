@@ -26,13 +26,16 @@ For a complete guide to the plugin system, see the [Plugin Overview](https://clo
 
 ## Installation
 
-**From git** (recommended): Open **Settings > Plugins** in CloudCLI UI, paste this repository's URL, and click **Install**. The repo is cloned, dependencies are installed, and the plugin is ready to enable.
+**From git** (recommended): Open **Settings > Plugins** in CloudCLI UI, paste this repository's URL, and click **Install**. The repo is cloned, dependencies are installed, TypeScript is compiled, and the plugin is ready to enable.
 
 **Manual:** Clone or copy this repository into your plugins directory:
 
 
 ```bash
 git clone https://github.com/cloudcli-ai/cloudcli-plugin-starter.git ~/.claude-code-ui/plugins/project-stats
+cd ~/.claude-code-ui/plugins/project-stats
+npm install
+npm run build
 ```
 
 Then open **Settings > Plugins** — "Project Stats" should appear. Enable it to add the tab.
@@ -41,77 +44,93 @@ Then open **Settings > Plugins** — "Project Stats" should appear. Enable it to
 
 ```
 project-stats/
-  manifest.json   # Required — plugin metadata
-  index.js        # Required — frontend entry point (ES module)
-  server.js       # Optional — backend entry point (Node.js subprocess)
+  manifest.json       # Required — plugin metadata
+  package.json        # Dependencies and build script
+  tsconfig.json       # TypeScript configuration
+  src/
+    types.ts          # Plugin API type definitions
+    index.ts          # Frontend entry point (ES module)
+    server.ts         # Backend entry point (Node.js subprocess)
+  dist/               # Compiled output (auto-generated, not committed)
+    index.js          # Compiled frontend — referenced by manifest "entry"
+    server.js         # Compiled backend — referenced by manifest "server"
+  icon.svg            # Custom SVG icon for the tab
 ```
 
 ## How it works
 
-Plugins are ES modules loaded directly into the CloudCLI UI host app. The host calls your exported `mount(container, api)` function when the plugin tab is activated and `unmount(container)` when it is torn down.
+Plugins are TypeScript modules compiled to ES modules. The host calls your exported `mount(container, api)` function when the plugin tab is activated and `unmount(container)` when it is torn down.
 
 Plugins that need server-side logic can declare a `"server"` entry in their manifest. The host spawns it as a child process and proxies requests to it via `api.rpc()`.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  CloudCLI UI Host                                       │
-│                                                         │
-│  Plugin subprocess (server.js):                         │
-│    Runs as a child process with restricted env          │
-│    Listens on random local port                         │
-│    Receives secrets via X-Plugin-Secret-* headers       │
-└───────────┬─────────────────────────┬───────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  CloudCLI UI Host                                   │
+│                                                     │
+│  Plugin subprocess (dist/server.js):                │
+│    Runs as a child process with restricted env      │
+│    Listens on random local port                     │
+│    Receives secrets via X-Plugin-Secret-* headers   │
+└───────────┬─────────────────────────┬───────────────┘
             │ serves static files     │ proxies RPC
-┌───────────▼─────────────────────────▼───────────────────┐
-│  Frontend (browser)                                     │
-│                                                         │
-│  Plugin module (index.js)                               │
-│    import(url) → mount(container, api)                  │
-│    api.context          — theme / project / session     │
-│    api.onContextChange  — subscribe to changes          │
-│    api.rpc(method, path, body) → Promise                │
-└─────────────────────────────────────────────────────────┘
+┌───────────▼─────────────────────────▼───────────────┐
+│  Frontend (browser)                                 │
+│                                                     │
+│  Plugin module (dist/index.js)                      │
+│    import(url) → mount(container, api)              │
+│    api.context          — theme / project / session │
+│    api.onContextChange  — subscribe to changes      │
+│    api.rpc(method, path, body) → Promise            │
+└─────────────────────────────────────────────────────┘
 ```
+
+## TypeScript
+
+This plugin is written in TypeScript. The `src/types.ts` file contains full type definitions for the plugin API (`PluginAPI`, `PluginContext`, `PluginModule`). Copy this file into your own plugin for type-safe development.
+
+**Build:** `npm run build` compiles `src/` → `dist/` via `tsc`.
+
+**Watch:** `npm run dev` recompiles on file changes.
+
+When installing via **Settings > Plugins**, the host automatically runs `npm install` and `npm run build` — no manual build step needed.
 
 ## Frontend — Module API
 
-The host dynamically imports your entry file and calls `mount(container, api)`. Render any UI inside the container — plain HTML, styled components, charts, dashboards, anything you can build with vanilla JavaScript and the DOM.
+The host dynamically imports your compiled entry file and calls `mount(container, api)`. Render any UI inside the container — plain HTML, styled components, charts, dashboards, anything you can build with vanilla JavaScript and the DOM.
 
-```js
-export function mount(container, api) {
-  // api.context — current snapshot: { theme, project, session }
-  // api.onContextChange(cb) — subscribe, returns an unsubscribe function
-  // api.rpc(method, path, body?) — call the plugin's server subprocess
+```typescript
+import type { PluginAPI, PluginContext } from './types.js';
 
-  container.innerHTML = '<p>Hello!</p>';
+export function mount(container: HTMLElement, api: PluginAPI): void {
+  const ctx: PluginContext = api.context;
+  container.innerHTML = `<p>Hello! Theme: ${ctx.theme}</p>`;
 
   const unsub = api.onContextChange((ctx) => {
     container.style.background = ctx.theme === 'dark' ? '#111' : '#fff';
   });
 
-  container._cleanup = unsub;
+  (container as any)._cleanup = unsub;
 }
 
-export function unmount(container) {
-  if (typeof container._cleanup === 'function') container._cleanup();
+export function unmount(container: HTMLElement): void {
+  (container as any)._cleanup?.();
   container.innerHTML = '';
 }
 ```
 
 ### Context object
 
-```js
-api.context
-// {
-//   theme:   "dark" | "light",
-//   project: { name: string, path: string } | null,
-//   session: { id: string, title: string } | null,
-// }
+```typescript
+interface PluginContext {
+  theme: 'dark' | 'light';
+  project: { name: string; path: string } | null;
+  session: { id: string; title: string } | null;
+}
 ```
 
 ### RPC helper
 
-```js
+```typescript
 const data = await api.rpc('GET', '/stats?path=/my/project');
 const result = await api.rpc('POST', '/echo', { greeting: 'hi' });
 ```
@@ -120,7 +139,7 @@ const result = await api.rpc('POST', '/echo', { greeting: 'hi' });
 
 Plugins that need filesystem access, external APIs, npm packages, or persistent state can declare a `"server"` entry in their manifest. The host manages the lifecycle:
 
-1. When the plugin is enabled, the host spawns `node server.js`
+1. When the plugin is enabled, the host spawns `node dist/server.js`
 2. The subprocess **must** print a JSON line to stdout: `{"ready": true, "port": 12345}`
 3. The host proxies requests from `api.rpc()` to that port
 4. When the plugin is disabled or uninstalled, the host sends SIGTERM
@@ -137,17 +156,17 @@ The subprocess runs with a minimal env — only `PATH`, `HOME`, `NODE_ENV`, and 
 
 ```jsonc
 {
-  "name": "project-stats",      // Unique id — alphanumeric, hyphens, underscores
-  "displayName": "Project Stats", // Shown in the UI
+  "name": "project-stats",        // Unique id — alphanumeric, hyphens, underscores
+  "displayName": "Project Stats",  // Shown in the UI
   "version": "1.0.0",
   "description": "Short description shown in settings.",
   "author": "Your Name",
-  "icon": "icon.svg",           // Custom SVG icon
-  "type": "module",             // Must be "module"
-  "slot": "tab",                // Where the plugin appears — only "tab" today
-  "entry": "index.js",          // Frontend entry file
-  "server": "server.js",        // Optional — backend entry file
-  "permissions": []              // Reserved for future use
+  "icon": "icon.svg",             // Custom SVG icon
+  "type": "module",               // Must be "module"
+  "slot": "tab",                  // Where the plugin appears — only "tab" today
+  "entry": "dist/index.js",      // Compiled frontend entry file
+  "server": "dist/server.js",    // Optional — compiled backend entry file
+  "permissions": []                // Reserved for future use
 }
 ```
 
@@ -175,7 +194,7 @@ You are responsible for reviewing plugin code before installing.
 
 **Backend** — The subprocess runs as a separate OS process with restricted env, per-call secret injection via headers, and process-level isolation. Auth headers are stripped before proxying.
 
-**Install-time** — npm `postinstall` scripts are blocked (`--ignore-scripts`). Ship pre-built or use packages that work without postinstall hooks.
+**Install-time** — npm `postinstall` scripts are blocked (`--ignore-scripts`). Ship pre-built or use packages that work without postinstall hooks. The `npm run build` step is run automatically after install.
 
 ## Contributing
 
